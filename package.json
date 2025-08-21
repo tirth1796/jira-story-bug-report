@@ -4,7 +4,6 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "jira-trend": "node index.js",
     "story-bugs": "dotenv -e .env.local -- node storyBugs.js"
   },
   "dependencies": {
