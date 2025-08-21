@@ -1,0 +1,19 @@
+{
+  "name": "jira-trend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "jira-trend": "node index.js",
+    "story-bugs": "dotenv -e .env.local -- node storyBugs.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "jira.js": "^5.2.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^10.0.0"
+  },
+  "type": "module"
+}
