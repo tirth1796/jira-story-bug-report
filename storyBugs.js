@@ -9,6 +9,14 @@ dotenv.config({ path: ".env.local" });
 const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_FILTER_ID } =
   process.env;
 
+const STORIES_FILTER = `filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`;
+
+const getStoryBugsFilterUrl = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=issue%20in%20linkedIssues(${storyKey})%20AND%20issuetype%20IN%20(Bug,Regression)`;
+
+const getStoryBugsJQL = (storyKey) =>
+  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter=issue-category-ui`;
+
 const client = new Version3Client({
   host: JIRA_BASE_URL,
   authentication: {
@@ -20,11 +28,8 @@ const client = new Version3Client({
 });
 
 async function fetchStoriesAndBugs() {
-  // 1. Fetch all stories from filter
-  const jql = `filter=${JIRA_FILTER_ID} ORDER BY cf[15018]`;
-
   const stories = await client.issueSearch.searchForIssuesUsingJql({
-    jql,
+    jql: STORIES_FILTER,
     fields: ["summary", "customfield_15018"],
     maxResults: 100,
   });
@@ -41,7 +46,7 @@ async function fetchStoriesAndBugs() {
         .join(", ") ?? "Unassigned";
 
     // 2. Fetch linked bugs
-    const bugJql = `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter=issue-category-ui`;
+    const bugJql = getStoryBugsJQL(storyKey);
     const bugsResult = await client.issueSearch.searchForIssuesUsingJql({
       jql: bugJql,
       fields: ["summary"],
@@ -69,7 +74,7 @@ async function fetchStoriesAndBugs() {
     }
 
     const bugCount = bugs.length;
-    const bugCountSearchLink = `${JIRA_BASE_URL}issues/?jql=issue%20in%20linkedIssues(${storyKey})%20AND%20issuetype%20IN%20(Bug,Regression)`;
+    const bugCountSearchLink = getStoryBugsFilterUrl(storyKey);
 
     rows.push([
       {
