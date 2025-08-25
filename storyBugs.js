@@ -14,8 +14,15 @@ const STORIES_FILTER = `filter = qa-verified-cc AND filter = upcoming-release-cc
 const getStoryBugsFilterUrl = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=issue%20in%20linkedIssues(${storyKey})%20AND%20issuetype%20IN%20(Bug,Regression)`;
 
+const getStoryBugsCategoryUrl = (storyKey, category) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) ` +
+  `AND issuetype IN (Bug,Regression) ` +
+  `AND "Issue Category[Dropdown]" = "${encodeURIComponent(category)}" ` +
+  `AND status NOT IN (Archive, Duplicate)`;
+
 const getStoryBugsJQL = (storyKey) =>
-  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter=issue-category-ui`;
+  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate)`;
 
 const client = new Version3Client({
   host: JIRA_BASE_URL,
@@ -30,50 +37,43 @@ const client = new Version3Client({
 async function fetchStoriesAndBugs() {
   const stories = await client.issueSearch.searchForIssuesUsingJql({
     jql: STORIES_FILTER,
-    fields: ["summary", "customfield_15018"],
+    fields: ["summary", "customfield_15018", "customfield_22859"],
     maxResults: 100,
   });
 
   const rows = [];
-  const seenBugs = new Set();
 
   for (const story of stories.issues) {
+    const issueCategoryMap = {};
     const storyKey = story.key;
     const storyTitle = story.fields.summary;
     const devs =
       story.fields["customfield_15018"]
         ?.map((user) => user.displayName)
         .join(", ") ?? "Unassigned";
+    const pod = story.fields["customfield_22859"].value ?? "Unassigned";
 
     // 2. Fetch linked bugs
     const bugJql = getStoryBugsJQL(storyKey);
     const bugsResult = await client.issueSearch.searchForIssuesUsingJql({
       jql: bugJql,
-      fields: ["summary"],
+      fields: ["customfield_19203"],
       maxResults: 100,
     });
 
-    const bugs = [];
     for (const bug of bugsResult.issues) {
       const bugKey = bug.key;
-      const bugTitle = bug.fields.summary;
-      const bugLink = `${JIRA_BASE_URL}browse/${bugKey}`;
-
-      if (seenBugs.has(bugKey)) {
-        console.log("seenBugs", bugKey);
-        // mark duplicate in red
-        bugs.push({
-          v: bugKey,
-          l: { Target: bugLink, Tooltip: bugTitle },
-          s: { font: { color: { rgb: "FF0000" } } },
-        });
-      } else {
-        seenBugs.add(bugKey);
-        bugs.push({ v: bugKey, l: { Target: bugLink, Tooltip: bugTitle } });
-      }
+      const issueCategory =
+        bug.fields["customfield_19203"]?.value || "Unassigned";
+      issueCategoryMap[issueCategory] = [
+        ...new Set([...(issueCategoryMap[issueCategory] || []), bugKey]),
+      ];
     }
 
-    const bugCount = bugs.length;
+    const bugCount = Object.values(issueCategoryMap).reduce(
+      (sum, issues) => sum + issues.length,
+      0
+    );
     const bugCountSearchLink = getStoryBugsFilterUrl(storyKey);
 
     rows.push([
@@ -87,7 +87,17 @@ async function fetchStoriesAndBugs() {
       },
       devs,
       { v: bugCount, t: "n", l: { Target: bugCountSearchLink } },
-      bugs.map((b) => (typeof b === "string" ? { v: b } : b)), // keep hyperlink & styles
+      pod,
+      Object.entries(issueCategoryMap).map(([category, issues]) => ({
+        v: `${category} (${issues.length})`,
+        l: { Target: getStoryBugsCategoryUrl(storyKey, category) },
+        s: {
+          font: {
+            color: { rgb: "0000FF" }, // Blue
+            underline: true,
+          },
+        },
+      })),
     ]);
   }
 
@@ -99,13 +109,14 @@ async function main() {
 
   // 1st row headers
   const aoa = [
-    ["Story Key", "Story Title", "Devs", "Bug Count", "Bugs"],
+    ["Story Key", "Story Title", "Devs", "Bug Count", "Pod", "Issue Category"],
     ...data.map((r) => [
       r[0], // story key (hyperlinked)
       r[1], // story title (hyperlinked)
       r[2], // devs
       r[3], // bug count (hyperlinked search)
-      ...r[4], // array of bugs (hyperlinks, styled for duplicates)
+      r[4], // pod
+      ...r[5], // issue category array (hyperlinked)
     ]),
   ];
 
