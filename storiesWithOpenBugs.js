@@ -7,10 +7,10 @@ dotenv.config({ path: ".env.local" });
 
 const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
 
-const STORIES_FILTER = `filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`;
+const STORIES_FILTER = `filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework") AND filter != qa-verified-cc`;
 
 const getStoryBugsJQL = (storyKey) =>
-  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND filter=status-incomplete-cc AND filter=issue-category-ui`;
+  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND filter=status-incomplete-cc`;
 
 const client = new Version3Client({
   host: JIRA_BASE_URL,
@@ -25,8 +25,14 @@ const client = new Version3Client({
 async function fetchStoriesWithOpenBugs() {
   const stories = await client.issueSearch.searchForIssuesUsingJql({
     jql: STORIES_FILTER,
-    fields: ["summary", "customfield_15018", "customfield_19203", "status"],
-    maxResults: 100,
+    fields: [
+      "summary",
+      "customfield_15018",
+      "customfield_19203",
+      "customfield_22859",
+      "status",
+    ],
+    maxResults: 1000,
   });
 
   const storiesWithBugs = [];
@@ -40,6 +46,7 @@ async function fetchStoriesWithOpenBugs() {
         ?.map((user) => user.displayName)
         .join(", ") ?? "Unassigned";
     const issueCategory = story.fields["customfield_19203"]?.value ?? "Unset";
+    const podName = story.fields["customfield_22859"]?.value ?? "Unset";
 
     // Fetch linked open bugs
     const bugJql = getStoryBugsJQL(storyKey);
@@ -65,6 +72,7 @@ async function fetchStoriesWithOpenBugs() {
         storyStatus,
         devs,
         issueCategory,
+        podName,
         bugs,
         bugCount: bugs.length,
       });
@@ -75,22 +83,51 @@ async function fetchStoriesWithOpenBugs() {
 }
 
 function generateMarkdown(storiesWithBugs) {
-  let markdown = `# Stories with Open Bugs\n\n`;
+  let markdown = `## Stories with Open Bugs\n\n`;
 
   if (storiesWithBugs.length === 0) {
     markdown += `🎉 No stories with open bugs found!\n`;
     return markdown;
   }
 
+  // Group stories by pod
+  const storiesByPod = {};
   for (const story of storiesWithBugs) {
-    // Story link
-    markdown += `${JIRA_BASE_URL}browse/${story.storyKey}\n`;
-
-    // Nested bug bullets
-    for (const bug of story.bugs) {
-      markdown += `\t - ${JIRA_BASE_URL}browse/${bug.key} - ${bug.issueCategory} - ${bug.status}\n`;
+    const podName = story.podName;
+    if (!storiesByPod[podName]) {
+      storiesByPod[podName] = [];
     }
-    markdown += `\n`;
+    storiesByPod[podName].push(story);
+  }
+
+  // Sort pods alphabetically
+  const sortedPods = Object.keys(storiesByPod).sort();
+
+  // Generate markdown grouped by pod
+  for (const podName of sortedPods) {
+    const stories = storiesByPod[podName];
+
+    // Pod header
+    markdown += `__${podName}__\n\n`;
+
+    // Stories in this pod (numbered list)
+    for (let i = 0; i < stories.length; i++) {
+      const story = stories[i];
+      const storyNumber = i + 1;
+
+      // Story link (numbered)
+      markdown += `${storyNumber}. ${JIRA_BASE_URL}browse/${story.storyKey}\n`;
+
+      // Nested bug bullets (numbered)
+      for (let j = 0; j < story.bugs.length; j++) {
+        const bug = story.bugs[j];
+        const bugNumber = j + 1;
+        markdown += `\t ${bugNumber}. ${JIRA_BASE_URL}browse/${bug.key} - ${bug.issueCategory} - ${bug.status}\n`;
+      }
+      markdown += `\n`;
+    }
+
+    markdown += `---\n\n`;
   }
 
   return markdown;
