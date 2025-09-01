@@ -4,7 +4,8 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "story-bugs": "dotenv -e .env.local -- node storyBugs.js"
+    "story-bugs": "dotenv -e .env.local -- node storyBugs.js",
+    "open-bugs": "dotenv -e .env.local -- node storiesWithOpenBugs.js"
   },
   "dependencies": {
     "dotenv": "^17.2.1",

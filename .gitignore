@@ -3,3 +3,4 @@ node_modules
 *.xlsx
 .idea
 .DS_Store
+stories_with_open_bugs.md
