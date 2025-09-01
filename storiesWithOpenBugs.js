@@ -9,6 +9,10 @@ const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
 
 const STORIES_FILTER = `filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework") AND filter != qa-verified-cc`;
 
+// Set this to a custom field ID to group by that field (e.g., "customfield_22859" for CFM Pod Name)
+// Leave undefined to not group and print normally
+const GROUPBY_FIELD = "customfield_22859";
+
 const getStoryBugsJQL = (storyKey) =>
   `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND filter=status-incomplete-cc`;
 
@@ -29,7 +33,7 @@ async function fetchStoriesWithOpenBugs() {
       "summary",
       "customfield_15018",
       "customfield_19203",
-      "customfield_22859",
+      ...(GROUPBY_FIELD ? [GROUPBY_FIELD] : []),
       "status",
     ],
     maxResults: 1000,
@@ -46,7 +50,9 @@ async function fetchStoriesWithOpenBugs() {
         ?.map((user) => user.displayName)
         .join(", ") ?? "Unassigned";
     const issueCategory = story.fields["customfield_19203"]?.value ?? "Unset";
-    const podName = story.fields["customfield_22859"]?.value ?? "Unset";
+    const groupByValue = GROUPBY_FIELD
+      ? story.fields[GROUPBY_FIELD]?.value ?? "Unset"
+      : null;
 
     // Fetch linked open bugs
     const bugJql = getStoryBugsJQL(storyKey);
@@ -72,7 +78,7 @@ async function fetchStoriesWithOpenBugs() {
         storyStatus,
         devs,
         issueCategory,
-        podName,
+        groupByValue,
         bugs,
         bugCount: bugs.length,
       });
@@ -90,29 +96,50 @@ function generateMarkdown(storiesWithBugs) {
     return markdown;
   }
 
-  // Group stories by pod
-  const storiesByPod = {};
-  for (const story of storiesWithBugs) {
-    const podName = story.podName;
-    if (!storiesByPod[podName]) {
-      storiesByPod[podName] = [];
+  if (GROUPBY_FIELD) {
+    // Group stories by the specified field
+    const storiesByGroup = {};
+    for (const story of storiesWithBugs) {
+      const groupValue = story.groupByValue;
+      if (!storiesByGroup[groupValue]) {
+        storiesByGroup[groupValue] = [];
+      }
+      storiesByGroup[groupValue].push(story);
     }
-    storiesByPod[podName].push(story);
-  }
 
-  // Sort pods alphabetically
-  const sortedPods = Object.keys(storiesByPod).sort();
+    // Sort groups alphabetically
+    const sortedGroups = Object.keys(storiesByGroup).sort();
 
-  // Generate markdown grouped by pod
-  for (const podName of sortedPods) {
-    const stories = storiesByPod[podName];
+    // Generate markdown grouped by the field
+    for (const groupValue of sortedGroups) {
+      const stories = storiesByGroup[groupValue];
 
-    // Pod header
-    markdown += `__${podName}__\n\n`;
+      // Group header
+      markdown += `__${groupValue}__\n\n`;
 
-    // Stories in this pod (numbered list)
-    for (let i = 0; i < stories.length; i++) {
-      const story = stories[i];
+      // Stories in this group (numbered list)
+      for (let i = 0; i < stories.length; i++) {
+        const story = stories[i];
+        const storyNumber = i + 1;
+
+        // Story link (numbered)
+        markdown += `${storyNumber}. ${JIRA_BASE_URL}browse/${story.storyKey}\n`;
+
+        // Nested bug bullets (numbered)
+        for (let j = 0; j < story.bugs.length; j++) {
+          const bug = story.bugs[j];
+          const bugNumber = j + 1;
+          markdown += `\t ${bugNumber}. ${JIRA_BASE_URL}browse/${bug.key} - ${bug.issueCategory} - ${bug.status}\n`;
+        }
+        markdown += `\n`;
+      }
+
+      markdown += `---\n\n`;
+    }
+  } else {
+    // Print normally without grouping
+    for (let i = 0; i < storiesWithBugs.length; i++) {
+      const story = storiesWithBugs[i];
       const storyNumber = i + 1;
 
       // Story link (numbered)
@@ -126,8 +153,6 @@ function generateMarkdown(storiesWithBugs) {
       }
       markdown += `\n`;
     }
-
-    markdown += `---\n\n`;
   }
 
   return markdown;
