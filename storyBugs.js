@@ -2,7 +2,6 @@
 import dotenv from "dotenv";
 import { Version3Client } from "jira.js";
 import * as XLSX from "xlsx";
-import fs from "fs";
 
 dotenv.config({ path: ".env.local" });
 
@@ -14,6 +13,14 @@ const STORIES_FILTER = `filter = qa-verified-cc AND filter = upcoming-release-cc
 const getStoryBugsFilterUrl = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=issue%20in%20linkedIssues(${storyKey})%20AND%20issuetype%20IN%20(Bug,Regression)`;
 
+const getQA6OnlyBugLink = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter != reported-in-production-cc`;
+
+const getProductionBugLink = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter = reported-in-production-cc`;
+
 const getStoryBugsCategoryUrl = (storyKey, category) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `issue in linkedIssues(${storyKey}) ` +
@@ -21,8 +28,23 @@ const getStoryBugsCategoryUrl = (storyKey, category) =>
   `AND "Issue Category[Dropdown]" = "${encodeURIComponent(category)}" ` +
   `AND status NOT IN (Archive, Duplicate)`;
 
+const getUIBugLink = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) ` +
+  `AND issuetype IN (Bug,Regression) ` +
+  `AND  "Issue Category[Dropdown]" IN ( UI,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI" )` +
+  `AND status NOT IN (Archive, Duplicate)`;
+
 const getStoryBugsJQL = (storyKey) =>
   `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate)`;
+
+const getQA6UIOnlyBugLink = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) ` +
+  `AND issuetype IN (Bug,Regression) ` +
+  `AND  "Issue Category[Dropdown]" IN ( UI,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI" )` +
+  `AND status NOT IN (Archive, Duplicate) +
+    AND filter != reported-in-production-cc`;
 
 const client = new Version3Client({
   host: JIRA_BASE_URL,
@@ -37,7 +59,13 @@ const client = new Version3Client({
 async function fetchStoriesAndBugs() {
   const stories = await client.issueSearch.searchForIssuesUsingJql({
     jql: STORIES_FILTER,
-    fields: ["summary", "customfield_15018", "customfield_22859"],
+    fields: [
+      "summary",
+      "status",
+      "customfield_15018",
+      "customfield_22859",
+      "customfield_21718",
+    ],
     maxResults: 100,
   });
 
@@ -47,24 +75,38 @@ async function fetchStoriesAndBugs() {
     const issueCategoryMap = {};
     const storyKey = story.key;
     const storyTitle = story.fields.summary;
+    const status = story.fields.status.name;
     const devs =
       story.fields["customfield_15018"]
         ?.map((user) => user.displayName)
         .join(", ") ?? "Unassigned";
     const pod = story.fields["customfield_22859"].value ?? "Unassigned";
+    const UIDevStoryPoints = story.fields["customfield_21718"];
 
     // 2. Fetch linked bugs
     const bugJql = getStoryBugsJQL(storyKey);
     const bugsResult = await client.issueSearch.searchForIssuesUsingJql({
       jql: bugJql,
-      fields: ["customfield_19203"],
+      fields: ["customfield_19203", "customfield_18500"],
       maxResults: 100,
     });
 
+    let qa6Bugs = 0;
+    let nonQa6Bugs = 0;
+    let uiQA6BugsCount = 0;
     for (const bug of bugsResult.issues) {
-      const bugKey = bug.key;
+      const temp = bug?.fields?.["customfield_18500"]?.map((x) => x.value);
       const issueCategory =
         bug.fields["customfield_19203"]?.value || "Unassigned";
+      if (temp?.length === 1 && temp[0] === "QA6") {
+        qa6Bugs += 1;
+        if (issueCategory.includes("UI")) {
+          uiQA6BugsCount += 1;
+        }
+      } else {
+        nonQa6Bugs += 1;
+      }
+      const bugKey = bug.key;
       issueCategoryMap[issueCategory] = [
         ...new Set([...(issueCategoryMap[issueCategory] || []), bugKey]),
       ];
@@ -74,7 +116,18 @@ async function fetchStoriesAndBugs() {
       (sum, issues) => sum + issues.length,
       0
     );
+
+    const uiBugCount = Object.keys(issueCategoryMap).reduce(
+      (sum, key) =>
+        key.includes("UI") ? sum + issueCategoryMap[key].length : sum,
+      0
+    );
+
     const bugCountSearchLink = getStoryBugsFilterUrl(storyKey);
+    const qa6OnlyBugsSearchLink = getQA6OnlyBugLink(storyKey);
+    const nonQa6OnlyBugsSearchLink = getProductionBugLink(storyKey);
+    const uiBugCountSearchLnk = getUIBugLink(storyKey);
+    const uiQA6OnlyBugsSearchLink = getQA6UIOnlyBugLink(storyKey);
 
     rows.push([
       {
@@ -87,7 +140,13 @@ async function fetchStoriesAndBugs() {
       },
       devs,
       { v: bugCount, t: "n", l: { Target: bugCountSearchLink } },
+      { v: qa6Bugs, t: "n", l: { Target: qa6OnlyBugsSearchLink } },
+      { v: nonQa6Bugs, t: "n", l: { Target: nonQa6OnlyBugsSearchLink } },
       pod,
+      { v: uiBugCount, t: "n", l: { Target: uiBugCountSearchLnk } },
+      { v: uiQA6BugsCount, t: "n", l: { Target: uiQA6OnlyBugsSearchLink } },
+      UIDevStoryPoints,
+      status,
       Object.entries(issueCategoryMap).map(([category, issues]) => ({
         v: `${category} (${issues.length})`,
         l: { Target: getStoryBugsCategoryUrl(storyKey, category) },
@@ -109,14 +168,33 @@ async function main() {
 
   // 1st row headers
   const aoa = [
-    ["Story Key", "Story Title", "Devs", "Bug Count", "Pod", "Issue Category"],
+    [
+      "Story Key",
+      "Story Title",
+      "Devs",
+      "Bug Count",
+      "QA6 Bugs",
+      "Production Bugs",
+      "Pod",
+      "UI Bugs",
+      "UI QA6 Bugs",
+      "ui dev story points",
+      "status",
+      "Issue Category",
+    ],
     ...data.map((r) => [
       r[0], // story key (hyperlinked)
       r[1], // story title (hyperlinked)
       r[2], // devs
       r[3], // bug count (hyperlinked search)
-      r[4], // pod
-      ...r[5], // issue category array (hyperlinked)
+      r[4], // qa6 bug count
+      r[5], //non qa6 bug count
+      r[6], // pod
+      r[7], //UI Bugs
+      r[8], //UI Qa6 Bugs
+      r[9], // ui dev story points
+      r[10], // status
+      ...r[11], // issue category array (hyperlinked)
     ]),
   ];
 
