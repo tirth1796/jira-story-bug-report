@@ -72,7 +72,7 @@ const client = new Version3Client({
 });
 
 async function fetchStoriesAndBugs() {
-  const stories = await client.issueSearch.searchForIssuesUsingJql({
+  const stories1 = await client.issueSearch.searchForIssuesUsingJql({
     jql: STORIES_FILTER,
     fields: [
       "summary",
@@ -84,9 +84,24 @@ async function fetchStoriesAndBugs() {
     maxResults: 100,
   });
 
+  const stories2 = await client.issueSearch.searchForIssuesUsingJql({
+    jql: STORIES_FILTER,
+    fields: [
+      "summary",
+      "status",
+      "customfield_15018",
+      "customfield_22859",
+      "customfield_21718",
+    ],
+    startAt: 100,
+    maxResults: 100,
+  });
+
+  const stories = [...stories1.issues,...stories2.issues];
+
   const rows = [];
 
-  for (const story of stories.issues) {
+  for (const story of stories) {
     const issueCategoryMap = {};
     const storyKey = story.key;
     const storyTitle = story.fields.summary;
