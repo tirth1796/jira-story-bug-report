@@ -46,6 +46,21 @@ const getQA6UIOnlyBugLink = (storyKey) =>
   `AND status NOT IN (Archive, Duplicate) +
     AND filter != reported-in-production-cc`;
 
+const getQA6BackendOnlyBugLink = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) ` +
+  `AND issuetype IN (Bug,Regression) ` +
+  `AND  "Issue Category[Dropdown]" IN ( Backend,"Backend %26 UI","Backend%2BAI","UI%2BBackend%2BAI" )` +
+  `AND status NOT IN (Archive, Duplicate) +
+    AND filter != reported-in-production-cc`;
+
+const getBlockerCriticalBugLink = (storyKey) =>
+  `${JIRA_BASE_URL}issues/?jql=` +
+  `issue in linkedIssues(${storyKey}) ` +
+  `AND issuetype IN (Bug,Regression) ` +
+  `AND  priority in ("Blocker (Immediate Resolution)", Critical)` +
+  `AND status NOT IN (Archive, Duplicate)`;
+
 const client = new Version3Client({
   host: JIRA_BASE_URL,
   authentication: {
@@ -87,21 +102,33 @@ async function fetchStoriesAndBugs() {
     const bugJql = getStoryBugsJQL(storyKey);
     const bugsResult = await client.issueSearch.searchForIssuesUsingJql({
       jql: bugJql,
-      fields: ["customfield_19203", "customfield_18500"],
+      fields: ["customfield_19203", "customfield_18500", "priority"],
       maxResults: 100,
     });
 
     let qa6Bugs = 0;
     let nonQa6Bugs = 0;
     let uiQA6BugsCount = 0;
+    let backendQA6BugsCount = 0;
+    let blockerCriticalBugs = 0;
     for (const bug of bugsResult.issues) {
       const temp = bug?.fields?.["customfield_18500"]?.map((x) => x.value);
+      const priority = bug?.fields?.["priority"]?.name;
+      if (
+        priority &&
+        (priority.includes("Blocker") || priority.includes("Critical"))
+      ) {
+        blockerCriticalBugs += 1;
+      }
       const issueCategory =
         bug.fields["customfield_19203"]?.value || "Unassigned";
       if (temp?.length === 1 && temp[0] === "QA6") {
         qa6Bugs += 1;
         if (issueCategory.includes("UI")) {
           uiQA6BugsCount += 1;
+        }
+        if (issueCategory.includes("Backend")) {
+          backendQA6BugsCount += 1;
         }
       } else {
         nonQa6Bugs += 1;
@@ -128,6 +155,8 @@ async function fetchStoriesAndBugs() {
     const nonQa6OnlyBugsSearchLink = getProductionBugLink(storyKey);
     const uiBugCountSearchLnk = getUIBugLink(storyKey);
     const uiQA6OnlyBugsSearchLink = getQA6UIOnlyBugLink(storyKey);
+    const backendQA6OnlyBugsSearchLink = getQA6BackendOnlyBugLink(storyKey);
+    const blockerBugsSearchLink = getBlockerCriticalBugLink(storyKey);
 
     rows.push([
       {
@@ -145,8 +174,14 @@ async function fetchStoriesAndBugs() {
       pod,
       { v: uiBugCount, t: "n", l: { Target: uiBugCountSearchLnk } },
       { v: uiQA6BugsCount, t: "n", l: { Target: uiQA6OnlyBugsSearchLink } },
+      {
+        v: backendQA6BugsCount,
+        t: "n",
+        l: { Target: backendQA6OnlyBugsSearchLink },
+      },
       UIDevStoryPoints,
       status,
+      { v: blockerCriticalBugs, t: "n", l: { Target: blockerBugsSearchLink } },
       Object.entries(issueCategoryMap).map(([category, issues]) => ({
         v: `${category} (${issues.length})`,
         l: { Target: getStoryBugsCategoryUrl(storyKey, category) },
@@ -178,8 +213,10 @@ async function main() {
       "Pod",
       "UI Bugs",
       "UI QA6 Bugs",
+      "Backend QA6 Bugs",
       "ui dev story points",
       "status",
+      "Blocker Critical Bugs Count",
       "Issue Category",
     ],
     ...data.map((r) => [
@@ -192,9 +229,11 @@ async function main() {
       r[6], // pod
       r[7], //UI Bugs
       r[8], //UI Qa6 Bugs
-      r[9], // ui dev story points
-      r[10], // status
-      ...r[11], // issue category array (hyperlinked)
+      r[9], //Backend QA6 Bugs
+      r[10], // ui dev story points
+      r[11], // status
+      r[12], //blocker/critical bugs count
+      ...r[13], // issue category array (hyperlinked)
     ]),
   ];
 
