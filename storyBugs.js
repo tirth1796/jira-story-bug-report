@@ -71,33 +71,37 @@ const client = new Version3Client({
   },
 });
 
+async function searchAllIssues(jql, fields, pageSize = 100) {
+  const allIssues = [];
+  let nextPageToken = undefined;
+  do {
+    const resp =
+      await client.issueSearch.searchForIssuesUsingJqlEnhancedSearchPost({
+        jql,
+        fields,
+        maxResults: pageSize,
+        nextPageToken,
+      });
+    if (resp?.issues?.length) {
+      allIssues.push(...resp.issues);
+    }
+    nextPageToken = resp?.nextPageToken ?? undefined;
+  } while (nextPageToken);
+  return allIssues;
+}
+
 async function fetchStoriesAndBugs() {
-  const stories1 = await client.issueSearch.searchForIssuesUsingJql({
-    jql: STORIES_FILTER,
-    fields: [
+  const stories = await searchAllIssues(
+    STORIES_FILTER,
+    [
       "summary",
       "status",
       "customfield_15018",
       "customfield_22859",
       "customfield_21718",
     ],
-    maxResults: 100,
-  });
-
-  const stories2 = await client.issueSearch.searchForIssuesUsingJql({
-    jql: STORIES_FILTER,
-    fields: [
-      "summary",
-      "status",
-      "customfield_15018",
-      "customfield_22859",
-      "customfield_21718",
-    ],
-    startAt: 100,
-    maxResults: 100,
-  });
-
-  const stories = [...stories1.issues,...stories2.issues];
+    100
+  );
 
   const rows = [];
 
@@ -115,18 +119,18 @@ async function fetchStoriesAndBugs() {
 
     // 2. Fetch linked bugs
     const bugJql = getStoryBugsJQL(storyKey);
-    const bugsResult = await client.issueSearch.searchForIssuesUsingJql({
-      jql: bugJql,
-      fields: ["customfield_19203", "customfield_18500", "priority"],
-      maxResults: 100,
-    });
+    const bugIssues = await searchAllIssues(
+      bugJql,
+      ["customfield_19203", "customfield_18500", "priority"],
+      100
+    );
 
     let qa6Bugs = 0;
     let nonQa6Bugs = 0;
     let uiQA6BugsCount = 0;
     let backendQA6BugsCount = 0;
     let blockerCriticalBugs = 0;
-    for (const bug of bugsResult.issues) {
+    for (const bug of bugIssues) {
       const temp = bug?.fields?.["customfield_18500"]?.map((x) => x.value);
       const priority = bug?.fields?.["priority"]?.name;
       if (
