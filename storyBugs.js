@@ -8,8 +8,6 @@ dotenv.config({ path: ".env.local" });
 const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_FILTER_ID } =
   process.env;
 
-const STORIES_FILTER = `filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`;
-
 const getBugFilter = storyKey => `(issue in linkedIssues(${storyKey}) OR issue in linkedIssues(${storyKey}, "linked from") OR issue in linkedIssues(${storyKey}, "is bug of") OR issue in linkedIssues(${storyKey}, "blocks") OR issue in linkedIssues(${storyKey}, "is blocked by") OR issue in linkedIssues(${storyKey}, "has bug") OR issue in linkedIssues(${storyKey}, "is caused by") OR issue in linkedIssues(${storyKey}, "causes") OR issue in linkedIssues(${storyKey}, "depends on") OR issue in linkedIssues(${storyKey}, "is parent of") OR issue in linkedIssues(${storyKey}, "is child of") OR issue in linkedIssues(${storyKey}, "relates to") OR issue in linkedIssues(${storyKey}, "related to"))`
 
 const getStoryBugsFilterUrl = (storyKey) =>
@@ -94,9 +92,9 @@ async function searchAllIssues(jql, fields, pageSize = 100) {
   return allIssues;
 }
 
-async function fetchStoriesAndBugs() {
+async function fetchStoriesAndBugs(stories_filter) {
   const stories = await searchAllIssues(
-    STORIES_FILTER,
+      stories_filter,
     [
       "summary",
       "status",
@@ -104,7 +102,7 @@ async function fetchStoriesAndBugs() {
       "customfield_22859",
       "customfield_21718",
     ],
-    100
+    1
   );
 
   const rows = [];
@@ -118,7 +116,7 @@ async function fetchStoriesAndBugs() {
       story.fields["customfield_15018"]
         ?.map((user) => user.displayName)
         .join(", ") ?? "Unassigned";
-    const pod = story.fields["customfield_22859"].value ?? "Unassigned";
+    const pod = story.fields["customfield_22859"]?.value ?? "Unassigned";
     const UIDevStoryPoints = story.fields["customfield_21718"];
 
     // 2. Fetch linked bugs
@@ -222,51 +220,62 @@ async function fetchStoriesAndBugs() {
 }
 
 async function main() {
-  const data = await fetchStoriesAndBugs();
-
-  // 1st row headers
-  const aoa = [
-    [
-      "Story Key",
-      "Story Title",
-      "Devs",
-      "Bug Count",
-      "QA6 Bugs",
-      "Production Bugs",
-      "Pod",
-      "UI Bugs",
-      "UI QA6 Bugs",
-      "Backend QA6 Bugs",
-      "ui dev story points",
-      "status",
-      "Blocker Critical Bugs Count",
-      "Issue Category",
-    ],
-    ...data.map((r) => [
-      r[0], // story key (hyperlinked)
-      r[1], // story title (hyperlinked)
-      r[2], // devs
-      r[3], // bug count (hyperlinked search)
-      r[4], // qa6 bug count
-      r[5], //non qa6 bug count
-      r[6], // pod
-      r[7], //UI Bugs
-      r[8], //UI Qa6 Bugs
-      r[9], //Backend QA6 Bugs
-      r[10], // ui dev story points
-      r[11], // status
-      r[12], //blocker/critical bugs count
-      ...r[13], // issue category array (hyperlinked)
-    ]),
-  ];
-
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-  // Column widths
-  ws["!cols"] = [{ wch: 10 }, { wch: 80 }, { wch: 30 }, { wch: 8 }];
+  const POD_VS_STORIES_FILTER = {
+    "CFM": `filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`,
+    "INSIGHTS": `filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc OR filter = akash-modi-team-cc) AND issuetype IN (Story, "USE Framework")`
+  }
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Stories & Bugs");
+
+  const modules = Object.keys(POD_VS_STORIES_FILTER);
+
+  for(let i = 0; i < modules.length; i++) {
+      const key = modules[i];
+      const stories_filter = POD_VS_STORIES_FILTER[key];
+
+      const data = await fetchStoriesAndBugs(stories_filter);
+      // 1st row headers
+      const aoa = [
+        [
+          "Story Key",
+          "Story Title",
+          "Devs",
+          "Bug Count",
+          "QA6 Bugs",
+          "Production Bugs",
+          "Pod",
+          "UI Bugs",
+          "UI QA6 Bugs",
+          "Backend QA6 Bugs",
+          "ui dev story points",
+          "status",
+          "Blocker Critical Bugs Count",
+          "Issue Category",
+        ],
+        ...data.map((r) => [
+          r[0], // story key (hyperlinked)
+          r[1], // story title (hyperlinked)
+          r[2], // devs
+          r[3], // bug count (hyperlinked search)
+          r[4], // qa6 bug count
+          r[5], //non qa6 bug count
+          r[6], // pod
+          r[7], //UI Bugs
+          r[8], //UI Qa6 Bugs
+          r[9], //Backend QA6 Bugs
+          r[10], // ui dev story points
+          r[11], // status
+          r[12], //blocker/critical bugs count
+          ...r[13], // issue category array (hyperlinked)
+        ]),
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      // Column widths
+      ws["!cols"] = [{ wch: 10 }, { wch: 80 }, { wch: 30 }, { wch: 8 }];
+
+      XLSX.utils.book_append_sheet(wb, ws, `${key}`);
+  }
 
   XLSX.writeFile(wb, "stories_bugs.xlsx");
 }
