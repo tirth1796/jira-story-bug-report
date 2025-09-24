@@ -10,37 +10,41 @@ const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_FILTER_ID } =
 
 const STORIES_FILTER = `filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`;
 
+const getBugFilter = storyKey => `(issue in linkedIssues(${storyKey}) OR issue in linkedIssues(${storyKey}, "linked from") OR issue in linkedIssues(${storyKey}, "is bug of") OR issue in linkedIssues(${storyKey}, "blocks") OR issue in linkedIssues(${storyKey}, "is blocked by") OR issue in linkedIssues(${storyKey}, "has bug") OR issue in linkedIssues(${storyKey}, "is caused by") OR issue in linkedIssues(${storyKey}, "causes") OR issue in linkedIssues(${storyKey}, "depends on") OR issue in linkedIssues(${storyKey}, "is parent of") OR issue in linkedIssues(${storyKey}, "is child of") OR issue in linkedIssues(${storyKey}, "relates to") OR issue in linkedIssues(${storyKey}, "related to"))`
+
 const getStoryBugsFilterUrl = (storyKey) =>
-  `${JIRA_BASE_URL}issues/?jql=issue%20in%20linkedIssues(${storyKey})%20AND%20issuetype%20IN%20(Bug,Regression)`;
+    `${JIRA_BASE_URL}issues/?jql=` +
+    `${getBugFilter(storyKey)} ` +
+    `AND issuetype IN (Bug,Regression) `
 
 const getQA6OnlyBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter != reported-in-production-cc`;
+  `${getBugFilter(storyKey)} AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter != reported-in-production-cc`;
 
 const getProductionBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter = reported-in-production-cc`;
+  `${getBugFilter(storyKey)} AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate) AND filter = reported-in-production-cc`;
 
 const getStoryBugsCategoryUrl = (storyKey, category) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) ` +
+  `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
   `AND "Issue Category[Dropdown]" = "${encodeURIComponent(category)}" ` +
   `AND status NOT IN (Archive, Duplicate)`;
 
 const getUIBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) ` +
+  `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
   `AND  "Issue Category[Dropdown]" IN ( UI,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI" )` +
   `AND status NOT IN (Archive, Duplicate)`;
 
 const getStoryBugsJQL = (storyKey) =>
-  `issue in linkedIssues(${storyKey}) AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate)`;
+  `${getBugFilter(storyKey)} AND issuetype IN (Bug, Regression) AND status NOT IN (Archive, Duplicate)`;
 
 const getQA6UIOnlyBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) ` +
+  `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
   `AND  "Issue Category[Dropdown]" IN ( UI,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI" )` +
   `AND status NOT IN (Archive, Duplicate) +
@@ -48,7 +52,7 @@ const getQA6UIOnlyBugLink = (storyKey) =>
 
 const getQA6BackendOnlyBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) ` +
+  `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
   `AND  "Issue Category[Dropdown]" IN ( Backend,"Backend %26 UI","Backend%2BAI","UI%2BBackend%2BAI" )` +
   `AND status NOT IN (Archive, Duplicate) +
@@ -56,7 +60,7 @@ const getQA6BackendOnlyBugLink = (storyKey) =>
 
 const getBlockerCriticalBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
-  `issue in linkedIssues(${storyKey}) ` +
+  `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
   `AND  priority in ("Blocker (Immediate Resolution)", Critical)` +
   `AND status NOT IN (Archive, Duplicate)`;
