@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 
 dotenv.config({ path: ".env.local" });
 
-const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_FILTER_ID } =
+const { JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN } =
   process.env;
 
 const getBugFilter = storyKey => `(issue in linkedIssues(${storyKey}) OR issue in linkedIssues(${storyKey}, "linked from") OR issue in linkedIssues(${storyKey}, "is bug of") OR issue in linkedIssues(${storyKey}, "blocks") OR issue in linkedIssues(${storyKey}, "is blocked by") OR issue in linkedIssues(${storyKey}, "has bug") OR issue in linkedIssues(${storyKey}, "is caused by") OR issue in linkedIssues(${storyKey}, "causes") OR issue in linkedIssues(${storyKey}, "depends on") OR issue in linkedIssues(${storyKey}, "is parent of") OR issue in linkedIssues(${storyKey}, "is child of") OR issue in linkedIssues(${storyKey}, "relates to") OR issue in linkedIssues(${storyKey}, "related to"))`
@@ -63,6 +63,134 @@ const getBlockerCriticalBugLink = (storyKey) =>
   `AND  priority in ("Blocker (Immediate Resolution)", Critical)` +
   `AND status NOT IN (Archive, Duplicate)`;
 
+// ------------------------------
+// Utility: business days between 2 dates
+// ------------------------------
+function businessDaysDiff(startDate, endDate) {
+  let start = new Date(startDate);
+  let end = new Date(endDate);
+
+  if (isNaN(start) || isNaN(end)) return null;
+
+  if (start > end) [start, end] = [end, start];
+
+  let count = 0;
+  while (start < end) {
+    const day = start.getDay();
+    if (day !== 0 && day !== 6) count++;
+    start.setDate(start.getDate() + 1);
+  }
+  return count;
+}
+
+function formatTimestamp(timestamp) {
+  const date = new Date(timestamp);
+  const options = { year: "numeric", month: "long", day: "numeric" };
+  return date.toLocaleDateString("en-US", options);
+}
+
+function extractQAEvents(historyNodes) {
+  const movedToQA = historyNodes.find(
+      (o) => o.to === "Waiting For Build" || o.to === "Ready for QA"
+  );
+  const qaRejected = historyNodes.find((o) => o.to === "QA Rejected");
+  const qaBlocked = historyNodes.find((o) => o.to === "QA Blocked");
+  const qaVerified = historyNodes.find((o) => o.to === "QA Verified(Main)");
+  return { movedToQA, qaRejected, qaBlocked, qaVerified };
+}
+
+function getFirstBug(bugIssues) {
+  if (!bugIssues?.length) return null;
+  const sorted = bugIssues
+      .map((b) => ({
+        key: b.key,
+        createdTime: new Date(b.fields.created).getTime(),
+      }))
+      .sort((a, b) => a.createdTime - b.createdTime);
+  return sorted[0];
+}
+
+function analyzeStory(story, bugIssues) {
+ const histories = story.changelog?.histories ?? [];
+  const historyNodes = histories
+      .flatMap((h) =>
+          h.items
+              .filter((item) => item.field === "status")
+              .map((item) => ({
+                from: item.fromString,
+                to: item.toString,
+                timestamp: new Date(h.created).getTime(),
+              }))
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+  const { movedToQA, qaRejected, qaBlocked, qaVerified } =
+      extractQAEvents(historyNodes);
+
+  if (!movedToQA) return { kind: "NO_QA", key: story.key };
+
+  const firstBug = getFirstBug(bugIssues);
+  const baseInfo = {
+    key: story.key,
+    devDoneTimestamp: movedToQA.timestamp,
+    devDoneFormattedDate: formatTimestamp(movedToQA.timestamp),
+  };
+
+  if (qaRejected) {
+    if (firstBug && firstBug.createdTime <= qaRejected.timestamp) {
+      return {
+        ...baseInfo,
+        kind: "BUG",
+        firstBugKey: firstBug.key,
+        firstBugCreatedTimestamp: firstBug.createdTime,
+        firstBugFormattedDate: formatTimestamp(firstBug.createdTime),
+        businessDaysDiff: businessDaysDiff(movedToQA.timestamp, firstBug.createdTime),
+      };
+    }
+    return {
+      ...baseInfo,
+      kind: "QA_REJECTED",
+      qaRejectedTimestamp: qaRejected.timestamp,
+      qaRejectedFormattedDate: formatTimestamp(qaRejected.timestamp),
+      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, qaRejected.timestamp),
+    };
+  }
+
+  if (qaBlocked) {
+    return {
+      ...baseInfo,
+      kind: "QA_BLOCKED",
+      qaBlockedTimestamp: qaBlocked.timestamp,
+      qaBlockedFormattedDate: formatTimestamp(qaBlocked.timestamp),
+      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, qaBlocked.timestamp),
+    };
+  }
+
+  if (firstBug) {
+    return {
+      ...baseInfo,
+      kind: "BUG",
+      firstBugKey: firstBug.key,
+      firstBugCreatedTimestamp: firstBug.createdTime,
+      firstBugFormattedDate: formatTimestamp(firstBug.createdTime),
+      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, firstBug.createdTime),
+    };
+  }
+
+  if (qaVerified) {
+    return {
+      ...baseInfo,
+      kind: "QA_VERIFIED",
+      qaVerifiedTimestamp: qaVerified.timestamp,
+      qaVerifiedFormattedDate: formatTimestamp(qaVerified.timestamp),
+      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, qaVerified.timestamp),
+    };
+  }
+
+  return { ...baseInfo, kind: "UNKNOWN" };
+}
+
+
 const client = new Version3Client({
   host: JIRA_BASE_URL,
   authentication: {
@@ -73,24 +201,69 @@ const client = new Version3Client({
   },
 });
 
+async function getFullChangelog(issueKey) {
+  let allHistories = [];
+  let startAt = 0;
+  const maxResults = 100;
+
+  while (true) {
+    const resp = await client.issues.getChangeLogs({
+      issueIdOrKey: issueKey,
+      startAt,
+      maxResults,
+    });
+
+    if (resp.values?.length) {
+      allHistories.push(...resp.values);
+    }
+
+    // Stop if we've fetched everything
+    if (startAt + resp.maxResults >= resp.total) {
+      break;
+    }
+
+    startAt += maxResults;
+  }
+
+  return allHistories;
+}
+
+
 async function searchAllIssues(jql, fields, pageSize = 100) {
   const allIssues = [];
   let nextPageToken = undefined;
+
   do {
     const resp =
-      await client.issueSearch.searchForIssuesUsingJqlEnhancedSearchPost({
-        jql,
-        fields,
-        maxResults: pageSize,
-        nextPageToken,
-      });
+        await client.issueSearch.searchForIssuesUsingJqlEnhancedSearchPost({
+          jql,
+          fields,
+          expand: "changelog",
+          maxResults: pageSize,
+          nextPageToken,
+        });
+
     if (resp?.issues?.length) {
-      allIssues.push(...resp.issues);
+      for (const issue of resp.issues) {
+        const histories = issue.changelog?.histories ?? [];
+        const total = issue.changelog?.total ?? histories.length;
+
+        if (total > histories.length) {
+          // Need to fetch full changelog
+          const fullHistories = await getFullChangelog(issue.key);
+          issue.changelog.histories = fullHistories;
+        }
+
+        allIssues.push(issue);
+      }
     }
+
     nextPageToken = resp?.nextPageToken ?? undefined;
   } while (nextPageToken);
+
   return allIssues;
 }
+
 
 async function fetchStoriesAndBugs(stories_filter) {
   const stories = await searchAllIssues(
@@ -98,11 +271,12 @@ async function fetchStoriesAndBugs(stories_filter) {
     [
       "summary",
       "status",
+      "created",
       "customfield_15018",
       "customfield_22859",
       "customfield_21718",
     ],
-    1
+    100
   );
 
   const rows = [];
@@ -123,7 +297,7 @@ async function fetchStoriesAndBugs(stories_filter) {
     const bugJql = getStoryBugsJQL(storyKey);
     const bugIssues = await searchAllIssues(
       bugJql,
-      ["customfield_19203", "customfield_18500", "priority"],
+      ["customfield_19203", "customfield_18500", "priority","created"],
       100
     );
 
@@ -171,6 +345,9 @@ async function fetchStoriesAndBugs(stories_filter) {
       0
     );
 
+
+    const storyAnalysis = analyzeStory(story, bugIssues);
+
     const bugCountSearchLink = getStoryBugsFilterUrl(storyKey);
     const qa6OnlyBugsSearchLink = getQA6OnlyBugLink(storyKey);
     const nonQa6OnlyBugsSearchLink = getProductionBugLink(storyKey);
@@ -178,6 +355,11 @@ async function fetchStoriesAndBugs(stories_filter) {
     const uiQA6OnlyBugsSearchLink = getQA6UIOnlyBugLink(storyKey);
     const backendQA6OnlyBugsSearchLink = getQA6BackendOnlyBugLink(storyKey);
     const blockerBugsSearchLink = getBlockerCriticalBugLink(storyKey);
+
+    let firstQaEvent =  `${storyAnalysis.kind}`;
+    if(storyAnalysis.businessDaysDiff){
+      firstQaEvent+=` | ${storyAnalysis.businessDaysDiff}`;
+    }
 
     rows.push([
       {
@@ -203,6 +385,7 @@ async function fetchStoriesAndBugs(stories_filter) {
       UIDevStoryPoints,
       status,
       { v: blockerCriticalBugs, t: "n", l: { Target: blockerBugsSearchLink } },
+      firstQaEvent,
       Object.entries(issueCategoryMap).map(([category, issues]) => ({
         v: `${category} (${issues.length})`,
         l: { Target: getStoryBugsCategoryUrl(storyKey, category) },
@@ -222,7 +405,7 @@ async function fetchStoriesAndBugs(stories_filter) {
 async function main() {
   const POD_VS_STORIES_FILTER = {
     "CFM": `filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`,
-    "INSIGHTS": `filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc OR filter = akash-modi-team-cc) AND issuetype IN (Story, "USE Framework")`
+    "INSIGHTS": `filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc) AND issuetype IN (Story, "USE Framework")`
   }
 
   const wb = XLSX.utils.book_new();
@@ -250,6 +433,7 @@ async function main() {
           "ui dev story points",
           "status",
           "Blocker Critical Bugs Count",
+          "First QA Event",
           "Issue Category",
         ],
         ...data.map((r) => [
@@ -266,7 +450,8 @@ async function main() {
           r[10], // ui dev story points
           r[11], // status
           r[12], //blocker/critical bugs count
-          ...r[13], // issue category array (hyperlinked)
+          r[13],
+          ...r[14], // issue category array (hyperlinked)
         ]),
       ];
 
