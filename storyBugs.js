@@ -228,6 +228,31 @@ async function getFullChangelog(issueKey) {
   return allHistories;
 }
 
+async function fetchChangelogsInBatches(issueKeys, concurrency = 10) {
+  const results = {};
+  let index = 0;
+
+  async function worker() {
+    while (index < issueKeys.length) {
+      const current = index++;
+      const key = issueKeys[current];
+      try {
+        results[key] = await getFullChangelog(key);
+
+      } catch (err) {
+        console.error(`Failed to fetch changelog for ${key}`, err);
+        results[key] = [];
+      }
+    }
+  }
+
+  const workers = Array.from({ length: concurrency }, () => worker());
+  await Promise.all(workers);
+
+  return results;
+}
+
+
 
 async function searchAllIssues(jql, fields, pageSize = 100) {
   const allIssues = [];
@@ -238,22 +263,19 @@ async function searchAllIssues(jql, fields, pageSize = 100) {
         await client.issueSearch.searchForIssuesUsingJqlEnhancedSearchPost({
           jql,
           fields,
-          expand: "changelog",
           maxResults: pageSize,
           nextPageToken,
         });
 
     if (resp?.issues?.length) {
+      // Collect issue keys
+      const issueKeys = resp.issues.map(issue => issue.key);
+
+      const changelogs = await fetchChangelogsInBatches(issueKeys, 50);
+
+
       for (const issue of resp.issues) {
-        const histories = issue.changelog?.histories ?? [];
-        const total = issue.changelog?.total ?? histories.length;
-
-        if (total > histories.length) {
-          // Need to fetch full changelog
-          const fullHistories = await getFullChangelog(issue.key);
-          issue.changelog.histories = fullHistories;
-        }
-
+        issue.changelog = { histories: changelogs[issue.key] || [] };
         allIssues.push(issue);
       }
     }
@@ -284,6 +306,7 @@ async function fetchStoriesAndBugs(stories_filter) {
   for (const story of stories) {
     const issueCategoryMap = {};
     const storyKey = story.key;
+    console.log("Processing story...", storyKey);
     const storyTitle = story.fields.summary;
     const status = story.fields.status.name;
     const devs =
@@ -405,7 +428,7 @@ async function fetchStoriesAndBugs(stories_filter) {
 async function main() {
   const POD_VS_STORIES_FILTER = {
     "CFM": `filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")`,
-    "INSIGHTS": `filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc) AND issuetype IN (Story, "USE Framework")`
+    "INSIGHTS": `filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc OR filter = akash-modi-team-cc) AND issuetype IN (Story, "USE Framework") OR (issuekey in ("SPACE-121070"))`
   }
 
   const wb = XLSX.utils.book_new();
@@ -450,14 +473,16 @@ async function main() {
           r[10], // ui dev story points
           r[11], // status
           r[12], //blocker/critical bugs count
-          r[13],
+          r[13], // first QA event
           ...r[14], // issue category array (hyperlinked)
         ]),
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       // Column widths
-      ws["!cols"] = [{ wch: 10 }, { wch: 80 }, { wch: 30 }, { wch: 8 }];
+      const widths =  [{ wch: 10 }, { wch: 80 }, { wch: 30 }, { wch: 8 }];
+      widths[13] = { wch: 30 };
+      ws["!cols"] = widths;
 
       XLSX.utils.book_append_sheet(wb, ws, `${key}`);
   }
