@@ -256,6 +256,7 @@ function processInfo(info) {
     kind,
     firstQAEventTimestamp,
     firstQAEventFormattedDate,
+    firstBugKey,
     ...additional
   } = info;
 
@@ -266,6 +267,7 @@ function processInfo(info) {
     kind,
     firstQAEventTimestamp,
     firstQAEventFormattedDate,
+    firstBugKey,
     businessDaysDiff: getBusinessDaysDiff(
       devDoneTimestamp,
       firstQAEventTimestamp
@@ -367,6 +369,8 @@ async function fetchStoriesAndBugs(storiesFilter) {
   for (const story of stories) {
     const issueCategoryMap = {};
     const storyKey = story.key;
+    console.log("Processing Story...", storyKey);
+
     const storyTitle = story.fields.summary;
     const status = story.fields.status.name;
     const devs =
@@ -469,10 +473,10 @@ async function fetchStoriesAndBugs(storiesFilter) {
     const combineQA6BugsSearchLink = getCombineQA6BugLink(storyKey);
 
     const storyAnalysis = processInfo(analyzeStory(story, bugIssues));
-    let firstQaEvent = `${storyAnalysis.kind}`;
-    if (storyAnalysis.businessDaysDiff) {
-      firstQaEvent += ` | ${storyAnalysis.businessDaysDiff}`;
-    }
+    let firstQaEventType = `${storyAnalysis.kind}`;
+    let firstQaEventDays = storyAnalysis.businessDaysDiff;
+    const firstBugKey = storyAnalysis.firstBugKey;
+
     rows.push([
       {
         v: storyKey,
@@ -515,7 +519,9 @@ async function fetchStoriesAndBugs(storiesFilter) {
         t: "n",
         l: { Target: combineQA6BugsSearchLink },
       },
-      firstQaEvent,
+      firstQaEventType,
+      firstQaEventDays,
+      firstBugKey,
     ]);
   }
 
@@ -524,9 +530,9 @@ async function fetchStoriesAndBugs(storiesFilter) {
 
 async function main() {
   const POD_VS_STORIES_FILTER = {
-    CFM: 'filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework")',
+    CFM: 'filter = qa-verified-cc AND filter = upcoming-release-cc AND project = CFM AND issuetype IN (Story, "USE Framework",Security,"Dev Task / Custom Work")',
     INSIGHTS:
-      'filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc OR filter = akash-modi-team-cc) AND issuetype IN (Story, "USE Framework") OR (issuekey in ("SPACE-121070"))',
+      'filter = qa-verified-cc AND project not in (CFM) AND filter = upcoming-release-cc AND (filter = maulik-patel-team-cc OR filter = akash-modi-team-cc) AND issuetype IN (Story, "USE Framework",Security,"Dev Task / Custom Work") OR (issuekey in ("SPACE-121070"))',
   };
 
   const wb = XLSX.utils.book_new();
@@ -555,7 +561,9 @@ async function main() {
         "Backend Only QA6 Bugs",
         "Combine Bugs",
         "Combine QA6 bugs",
-        "Business Days taken for the dev to receive feedback from the QA",
+        "First QA Event Type",
+        "Business Days for First QA Event",
+        "First Bug Key"
       ],
       ...data.map((r) => [
         r[0], // story key (hyperlinked)
@@ -573,7 +581,9 @@ async function main() {
         r[12], // Backend QA6 Bugs
         r[13], // Combine Bugs
         r[14], // Combine QA6 bugs
-        r[15], // Business Days taken for the dev to receive feedback from the QA
+        r[15], // First QA Event Type
+        r[16], // Business Days for First QA Event
+        r[17]  // First Bug key
       ]),
     ];
 
