@@ -134,14 +134,15 @@ function extractQAEvents(historyNodes) {
   };
 }
 
-function getFirstBug(bugIssues) {
+function getFirstBug(bugIssues, movedToQA) {
   if (!bugIssues?.length) return null;
   const sorted = bugIssues
-    .map((b) => ({
-      key: b.key,
-      createdTime: new Date(b.fields.created).getTime(),
-    }))
-    .sort((a, b) => a.createdTime - b.createdTime);
+      .map((b) => ({
+        key: b.key,
+        createdTime: new Date(b.fields.created).getTime(),
+      }))
+      .filter((b) => b.createdTime >= movedToQA.timestamp)
+      .sort((a, b) => a.createdTime - b.createdTime);
   return sorted[0];
 }
 
@@ -175,7 +176,8 @@ function analyzeStory(story, bugIssues) {
 
   if (!movedToQA) return { kind: "NO_QA", key: story.key };
 
-  const firstBug = getFirstBug(bugIssues);
+  const firstBug = getFirstBug(bugIssues, movedToQA);
+
   const baseInfo = {
     key: story.key,
     devDoneTimestamp: movedToQA.timestamp,
