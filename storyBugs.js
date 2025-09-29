@@ -137,12 +137,12 @@ function extractQAEvents(historyNodes) {
 function getFirstBug(bugIssues, movedToQA) {
   if (!bugIssues?.length) return null;
   const sorted = bugIssues
-      .map((b) => ({
-        key: b.key,
-        createdTime: new Date(b.fields.created).getTime(),
-      }))
-      .filter((b) => b.createdTime >= movedToQA.timestamp)
-      .sort((a, b) => a.createdTime - b.createdTime);
+    .map((b) => ({
+      key: b.key,
+      createdTime: new Date(b.fields.created).getTime(),
+    }))
+    .filter((b) => b.createdTime >= movedToQA.timestamp)
+    .sort((a, b) => a.createdTime - b.createdTime);
   return sorted[0];
 }
 
@@ -357,6 +357,7 @@ async function fetchStoriesAndBugs(storiesFilter) {
     [
       "summary",
       "status",
+      "issuetype",
       "customfield_15018",
       "customfield_22859",
       "customfield_21718",
@@ -373,6 +374,7 @@ async function fetchStoriesAndBugs(storiesFilter) {
 
     const storyTitle = story.fields.summary;
     const status = story.fields.status.name;
+    const issueType = story.fields.issuetype.name;
     const devs =
       story.fields["customfield_15018"]
         ?.map((user) => user.displayName)
@@ -487,6 +489,7 @@ async function fetchStoriesAndBugs(storiesFilter) {
         l: { Target: `${JIRA_BASE_URL}browse/${storyKey}` },
       },
       pod,
+      issueType,
       status,
       devs,
       { v: blockerCriticalBugs, t: "n", l: { Target: blockerBugsSearchLink } },
@@ -525,7 +528,7 @@ async function fetchStoriesAndBugs(storiesFilter) {
     ]);
   }
 
-  return rows.sort((row1, row2) => row2[7].v - row1[7].v);
+  return rows.sort((row1, row2) => row2[8].v - row1[8].v);
 }
 
 async function main() {
@@ -549,6 +552,7 @@ async function main() {
         "Key",
         "Title",
         "Pod",
+        "Issue Type",
         "Status",
         "Devs",
         "Blocker Critical Bugs Count",
@@ -563,27 +567,28 @@ async function main() {
         "Combine QA6 bugs",
         "First QA Event Type",
         "Business Days for First QA Event",
-        "First Bug Key"
+        "First Bug Key",
       ],
       ...data.map((r) => [
         r[0], // story key (hyperlinked)
         r[1], // story title (hyperlinked)
         r[2], // pod
-        r[3], // status
-        r[4], // devs
-        r[5], // blocker/critical bugs count
-        r[6], // blocker/critical QA6 bugs count
-        r[7], // bug count (hyperlinked search)
-        r[8], // qa6 bug count
-        r[9], // UI Bugs
-        r[10], // UI QA6 Bugs
-        r[11], // Backend Only Bugs
-        r[12], // Backend QA6 Bugs
-        r[13], // Combine Bugs
-        r[14], // Combine QA6 bugs
-        r[15], // First QA Event Type
-        r[16], // Business Days for First QA Event
-        r[17]  // First Bug key
+        r[3], // issue type
+        r[4], // status
+        r[5], // devs
+        r[6], // blocker/critical bugs count
+        r[7], // blocker/critical QA6 bugs count
+        r[8], // bug count (hyperlinked search)
+        r[9], // qa6 bug count
+        r[10], // UI Bugs
+        r[11], // UI QA6 Bugs
+        r[12], // Backend Only Bugs
+        r[13], // Backend QA6 Bugs
+        r[14], // Combine Bugs
+        r[15], // Combine QA6 bugs
+        r[16], // First QA Event Type
+        r[17], // Business Days for First QA Event
+        r[18], // First Bug key
       ]),
     ];
 
