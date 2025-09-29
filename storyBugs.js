@@ -63,25 +63,29 @@ const getBlockerCriticalBugLink = (storyKey) =>
   `AND  priority in ("Blocker (Immediate Resolution)", Critical)` +
   `AND status NOT IN (Archive, Duplicate)`;
 
-// ------------------------------
-// Utility: business days between 2 dates
-// ------------------------------
-function businessDaysDiff(startDate, endDate) {
+function getBusinessDaysDiff(startDate, endDate) {
+  // Ensure input dates are Date objects
   let start = new Date(startDate);
   let end = new Date(endDate);
 
-  if (isNaN(start) || isNaN(end)) return null;
-
-  if (start > end) [start, end] = [end, start];
+  // If start is after end, swap
+  if (start > end) {
+    [start, end] = [end, start];
+  }
 
   let count = 0;
   while (start < end) {
     const day = start.getDay();
-    if (day !== 0 && day !== 6) count++;
+    if (day !== 0 && day !== 6) {
+      // 0 = Sunday, 6 = Saturday
+      count++;
+    }
     start.setDate(start.getDate() + 1);
   }
+
   return count;
 }
+
 
 function formatTimestamp(timestamp) {
   const date = new Date(timestamp);
@@ -96,7 +100,17 @@ function extractQAEvents(historyNodes) {
   const qaRejected = historyNodes.find((o) => o.to === "QA Rejected");
   const qaBlocked = historyNodes.find((o) => o.to === "QA Blocked");
   const qaVerified = historyNodes.find((o) => o.to === "QA Verified(Main)");
-  return { movedToQA, qaRejected, qaBlocked, qaVerified };
+  const uatOrClosed =
+      historyNodes.find((o) => o.to === "UAT") ||
+      historyNodes.find((o) => o.to === "Closed");
+  return {
+    movedToQA:
+        movedToQA || uatOrClosed,
+    qaRejected,
+    qaBlocked,
+    qaVerified,
+    uatOrClosed,
+  };
 }
 
 function getFirstBug(bugIssues) {
@@ -108,6 +122,17 @@ function getFirstBug(bugIssues) {
       }))
       .sort((a, b) => a.createdTime - b.createdTime);
   return sorted[0];
+}
+
+function firstBugInfo(firstBug) {
+  return {
+    kind: "BUG",
+    firstBugKey: firstBug.key,
+    firstBugCreatedTimestamp: firstBug.createdTime,
+    firstBugFormattedDate: formatTimestamp(firstBug.createdTime),
+    firstQAEventTimestamp: firstBug.createdTime,
+    firstQAEventFormattedDate: formatTimestamp(firstBug.createdTime),
+  };
 }
 
 function analyzeStory(story, bugIssues) {
@@ -124,7 +149,7 @@ function analyzeStory(story, bugIssues) {
       )
       .sort((a, b) => a.timestamp - b.timestamp);
 
-  const { movedToQA, qaRejected, qaBlocked, qaVerified } =
+  const { movedToQA, qaRejected, qaBlocked, qaVerified, uatOrClosed } =
       extractQAEvents(historyNodes);
 
   if (!movedToQA) return { kind: "NO_QA", key: story.key };
@@ -139,12 +164,8 @@ function analyzeStory(story, bugIssues) {
   if (qaRejected) {
     if (firstBug && firstBug.createdTime <= qaRejected.timestamp) {
       return {
+        ...firstBugInfo(firstBug),
         ...baseInfo,
-        kind: "BUG",
-        firstBugKey: firstBug.key,
-        firstBugCreatedTimestamp: firstBug.createdTime,
-        firstBugFormattedDate: formatTimestamp(firstBug.createdTime),
-        businessDaysDiff: businessDaysDiff(movedToQA.timestamp, firstBug.createdTime),
       };
     }
     return {
@@ -152,28 +173,32 @@ function analyzeStory(story, bugIssues) {
       kind: "QA_REJECTED",
       qaRejectedTimestamp: qaRejected.timestamp,
       qaRejectedFormattedDate: formatTimestamp(qaRejected.timestamp),
-      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, qaRejected.timestamp),
+      firstQAEventTimestamp: qaRejected.timestamp,
+      firstQAEventFormattedDate: formatTimestamp(qaRejected.timestamp),
     };
   }
 
   if (qaBlocked) {
+    if (firstBug && firstBug.createdTime <= qaBlocked.timestamp) {
+      return {
+        ...firstBugInfo(firstBug),
+        ...baseInfo,
+      };
+    }
     return {
       ...baseInfo,
       kind: "QA_BLOCKED",
       qaBlockedTimestamp: qaBlocked.timestamp,
       qaBlockedFormattedDate: formatTimestamp(qaBlocked.timestamp),
-      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, qaBlocked.timestamp),
+      firstQAEventTimestamp: qaBlocked.timestamp,
+      firstQAEventFormattedDate: formatTimestamp(qaBlocked.timestamp),
     };
   }
 
   if (firstBug) {
     return {
+      ...firstBugInfo(firstBug),
       ...baseInfo,
-      kind: "BUG",
-      firstBugKey: firstBug.key,
-      firstBugCreatedTimestamp: firstBug.createdTime,
-      firstBugFormattedDate: formatTimestamp(firstBug.createdTime),
-      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, firstBug.createdTime),
     };
   }
 
@@ -183,11 +208,47 @@ function analyzeStory(story, bugIssues) {
       kind: "QA_VERIFIED",
       qaVerifiedTimestamp: qaVerified.timestamp,
       qaVerifiedFormattedDate: formatTimestamp(qaVerified.timestamp),
-      businessDaysDiff: businessDaysDiff(movedToQA.timestamp, qaVerified.timestamp),
+      firstQAEventTimestamp: qaVerified.timestamp,
+      firstQAEventFormattedDate: formatTimestamp(qaVerified.timestamp),
     };
   }
 
-  return { ...baseInfo, kind: "UNKNOWN" };
+  if (uatOrClosed) {
+    return {
+      ...baseInfo,
+      kind: "UAT/Closed",
+      qaVerifiedTimestamp: uatOrClosed.timestamp,
+      qaVerifiedFormattedDate: formatTimestamp(uatOrClosed.timestamp),
+      firstQAEventTimestamp: uatOrClosed.timestamp,
+      firstQAEventFormattedDate: formatTimestamp(uatOrClosed.timestamp),
+    };
+  }
+}
+
+function processInfo(info) {
+  const {
+    key,
+    devDoneTimestamp,
+    devDoneFormattedDate,
+    kind,
+    firstQAEventTimestamp,
+    firstQAEventFormattedDate,
+    ...additional
+  } = info;
+
+  return {
+    key,
+    devDoneTimestamp,
+    devDoneFormattedDate,
+    kind,
+    firstQAEventTimestamp,
+    firstQAEventFormattedDate,
+    businessDaysDiff: getBusinessDaysDiff(
+        devDoneTimestamp,
+        firstQAEventTimestamp
+    ),
+    additional,
+  };
 }
 
 
@@ -369,7 +430,7 @@ async function fetchStoriesAndBugs(stories_filter) {
     );
 
 
-    const storyAnalysis = analyzeStory(story, bugIssues);
+    const storyAnalysis = processInfo(analyzeStory(story, bugIssues));
 
     const bugCountSearchLink = getStoryBugsFilterUrl(storyKey);
     const qa6OnlyBugsSearchLink = getQA6OnlyBugLink(storyKey);
