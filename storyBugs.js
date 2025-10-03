@@ -31,7 +31,7 @@ const getUIBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
-  `AND  "Issue Category[Dropdown]" IN ( UI,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI" )` +
+  `AND  "Issue Category[Dropdown]" IN ( UI )` +
   `AND status NOT IN (Archive, Duplicate)`;
 
 const getStoryBugsJQL = (storyKey) =>
@@ -43,7 +43,7 @@ const getQA6UIOnlyBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
-  `AND  "Issue Category[Dropdown]" IN ( UI,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI" )` +
+  `AND  "Issue Category[Dropdown]" IN ( UI )` +
   `AND status NOT IN (Archive, Duplicate) +
     AND filter != reported-in-production-cc`;
 
@@ -51,7 +51,7 @@ const getQA6BackendOnlyBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
-  `AND  "Issue Category[Dropdown]" IN ( Backend,"Backend %26 UI","Backend%2BAI","UI%2BBackend%2BAI" )` +
+  `AND  "Issue Category[Dropdown]" IN ( Backend )` +
   `AND status NOT IN (Archive, Duplicate)` +
   `AND filter != reported-in-production-cc`;
 
@@ -59,7 +59,7 @@ const getBackendBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
-  `AND  "Issue Category[Dropdown]" IN ( Backend,"Backend %26 UI","Backend%2BAI","UI%2BBackend%2BAI" )` +
+  `AND  "Issue Category[Dropdown]" IN ( Backend )` +
   `AND status NOT IN (Archive, Duplicate)`;
 
 const getBlockerCriticalBugLink = (storyKey) =>
@@ -81,14 +81,14 @@ const getCombineBugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
-  `AND  "Issue Category[Dropdown]" NOT IN ( UI,Backend,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI","Backend%2BAI" )` +
+  `AND  "Issue Category[Dropdown]" NOT IN ( "Backend %26 UI" )` +
   `AND status NOT IN (Archive, Duplicate)`;
 
 const getCombineQA6BugLink = (storyKey) =>
   `${JIRA_BASE_URL}issues/?jql=` +
   `${getBugFilter(storyKey)} ` +
   `AND issuetype IN (Bug,Regression) ` +
-  `AND  "Issue Category[Dropdown]" NOT IN ( UI,Backend,"Backend %26 UI","UI%2BAI","UI%2BBackend%2BAI","Backend%2BAI" )` +
+  `AND  "Issue Category[Dropdown]" NOT IN ( "Backend %26 UI" )` +
   `AND status NOT IN (Archive, Duplicate) ` +
   `AND filter != reported-in-production-cc`;
 
@@ -492,13 +492,13 @@ async function fetchStoriesAndBugs(storiesFilter) {
       issueType,
       status,
       devs,
+      { v: bugCount, t: "n", l: { Target: bugCountSearchLink } },
       { v: blockerCriticalBugs, t: "n", l: { Target: blockerBugsSearchLink } },
       {
         v: blockerCriticalQA6Bugs,
         t: "n",
         l: { Target: blockerQA6BugsSearchLink },
       },
-      { v: bugCount, t: "n", l: { Target: bugCountSearchLink } },
       { v: qa6Bugs, t: "n", l: { Target: qa6OnlyBugsSearchLink } },
       { v: uiBugCount, t: "n", l: { Target: uiBugCountSearchLnk } },
       { v: uiQA6BugsCount, t: "n", l: { Target: uiQA6OnlyBugsSearchLink } },
@@ -512,18 +512,20 @@ async function fetchStoriesAndBugs(storiesFilter) {
         t: "n",
         l: { Target: backendQA6OnlyBugsSearchLink },
       },
+
       {
         v: combineBugCount,
         t: "n",
         l: { Target: combineBugCountSearchLink },
       },
+
       {
         v: combineQA6BugsCount,
         t: "n",
         l: { Target: combineQA6BugsSearchLink },
       },
-      firstQaEventType,
       firstQaEventDays,
+      firstQaEventType,
       firstBugKey,
     ]);
   }
@@ -555,18 +557,18 @@ async function main() {
         "Issue Type",
         "Status",
         "Devs",
-        "Blocker Critical Bugs Count",
-        "Blocker Critical Bugs Count QA6",
-        "Bug Count",
-        "QA6 Bug Count",
-        "UI OnlyBugs",
-        "UI Only QA6 Bugs",
-        "Backend Only Bugs",
-        "Backend Only QA6 Bugs",
-        "Combine Bugs",
-        "Combine QA6 bugs",
-        "First QA Event Type",
-        "Business Days for First QA Event",
+        "Total Bugs",
+        "Blocker & Critical Bugs (QA6+Prod)",
+        "Blocker & Critical Bugs (QA6)",
+          "Bugs (QA6)",
+          "Bugs (FE)",
+          "Bugs (FE AND QA6)",
+          "Bugs (BE)",
+          "Bugs (BE AND QA6)",
+          "Bugs (BE & FE)",
+          "Bugs (BE & FE AND QA6)",
+        "Business days taken for the Dev to receive feedback",
+        "First Feedback Event Type",
         "First Bug Key",
       ],
       ...data.map((r) => [
